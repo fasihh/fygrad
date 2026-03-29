@@ -41,9 +41,11 @@ class Linear(Module):
     def __init__(self, in_dim: int, out_dim: int, label: str = ""):
         super().__init__()
 
-        self.W = Node.randn((in_dim + 1, out_dim), 0.1)
+        self.W = Node.randn((in_dim, out_dim), 0.1)
         self.W.label = f"{label}.W" if label else "W"
 
+        self.b = Node.randn((1, out_dim), 0.1)
+        self.b.label = f"{label}.b" if label else "b"
+
     def forward(self, x):
-        X = Node.concat(x, Node.ones((len(x), 1)))
-        return Node.matmul(X, self.W)
+        return Node.matmul(x, self.W) + self.b
