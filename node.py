@@ -79,18 +79,34 @@ class Node:
         return grad
     
     @staticmethod
-    def ones(shape: tuple, device: Device = "cpu") -> "Node":
-        return Node("ones", xp(device).ones(shape), device=device)
+    def ones(label: str, shape: tuple, device: Device = "cpu") -> "Node":
+        return Node(label, xp(device).ones(shape), device=device)
     
     @staticmethod
-    def randn(shape: tuple, scale: float = 1.0, device: Device = "cpu") -> "Node":
-        return Node("randn", xp(device).random.randn(*shape) * scale, device=device)
+    def zeros(label: str, shape: tuple, device: Device = "cpu") -> "Node":
+        return Node(label, xp(device).zeros(shape), device=device)
+    
+    @staticmethod
+    def randn(label: str, shape: tuple, scale: float = 1.0, device: Device = "cpu") -> "Node":
+        return Node(label, xp(device).random.randn(*shape) * scale, device=device)
 
+    @staticmethod
+    def tanh(obj: Value, device: Device = "cpu") -> "Node":
+        obj = Node.__ensure_node(obj, device)
+        value = 2 * (1 / (1 + xp(device).exp(2 * -obj.value))) - 1
+        out = Node(f"tanh({obj.label})", value=value, children=[obj], device=device)
+
+        def _backward():
+            obj.grad += out.grad * (1 - value ** 2)
+        
+        out._backward = _backward
+        return out
+    
     @staticmethod
     def relu(obj: Value, device: Device = "cpu") -> "Node":
         obj = Node.__ensure_node(obj, device)
         value = xp(device).maximum(0, obj.value)
-        out = Node(f"relu({obj.label})", value, children=[obj], device=device)
+        out = Node(f"relu({obj.label})", value=value, children=[obj], device=device)
 
         def _backward():
             obj.grad += out.grad * (obj.value > 0)
@@ -144,10 +160,26 @@ class Node:
 
         out._backward = _backward
         return out
+
+    @staticmethod
+    def binary_cross_entropy(prob: Value, target: np.ndarray, device: Device = "cpu") -> "Node":
+        prob = Node.__ensure_node(prob, device)
+        target = Node.__ensure_node(target, device)
+        xpv = xp(device)
+        loss_value = -xpv.mean(target.value * xpv.log(prob.value) + (1 - target.value) * xpv.log(1 - prob.value))
+
+        out = Node(f"binary_cross_entropy({prob.label})", value=loss_value, children=[prob], device=device)
+
+        def _backward():
+            prob.grad += out.grad * (prob.value - target.value) / (prob.value * (1 - prob.value))
+
+        out._backward = _backward
+        return out
     
     @staticmethod
     def mse(values: Value, target: Value, device: Device = "cpu") -> "Node":
-        values, target = Node.__ensure_node(values, device), Node.__ensure_node(target, device)
+        values = Node.__ensure_node(values, device)
+        target = Node.__ensure_node(target, device)
         batch_size = values.value.shape[0]
         loss_value = xp(device).mean((values.value[xp(device).arange(batch_size)] - target.value) ** 2) / 2
 
@@ -255,6 +287,9 @@ class Node:
     
     def __str__(self):
         return f"{self.label}={self.value}"
+
+    def __repr__(self):
+        return str(self)
     
     def __hash__(self):
         return id(self)
