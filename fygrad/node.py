@@ -1,4 +1,4 @@
-from typing import List, Union, Literal
+from typing import List, Union, Literal, Any, Dict
 import numpy as np
 
 type Value = Union["Node", float, np.ndarray]
@@ -17,7 +17,7 @@ def xp(device: Device):
 class Node:
     def __init__(
         self,
-        label: str, value: np.ndarray,
+        label: str, value: Any,
         grad: np.ndarray = None,
         children: List["Node"] = [],
         device: Device = "cpu"
@@ -55,7 +55,8 @@ class Node:
         return self
 
     def zero_grad(self):
-        self.grad = xp(self.device).zeros_like(self.grad, dtype=xp(self.device).float64)
+        self.grad.fill(0.)
+        # self.grad = xp(self.device).zeros_like(self.grad, dtype=xp(self.device).float64)
 
     @staticmethod
     def __ensure_node(obj: Value, device: Device = "cpu") -> "Node":
@@ -64,7 +65,7 @@ class Node:
                 raise RuntimeError(f"mismatch in devices: {obj} not {device}")
             return obj
         val = xp(device).array([[obj]], dtype=xp(device).float64) if xp(device).isscalar(obj) else xp(device).array(obj, dtype=xp(device).float64)
-        return Node(str(obj), val, device=device)
+        return Node(str(val), val, device=device)
 
     @staticmethod
     def __sum_to_shape(grad: np.ndarray, shape: tuple) -> np.ndarray:
@@ -224,6 +225,104 @@ class Node:
             
         out._backward = _backward
         return out
+    
+    @staticmethod
+    def mean(obj: Value, axis: int = -1, keepdims: bool = True, device: Device = "cpu") -> "Node":
+        obj = Node.__ensure_node(obj, device)
+        value = xp(device).mean(obj.value, axis=axis, keepdims=keepdims)
+        out = Node(f"mean({obj.label})", value, children=[obj], device=device)
+
+        def _backward():
+            n = obj.value.shape[axis]
+            obj.grad += out.grad * xp(device).ones_like(obj.value) / n
+
+        out._backward = _backward
+        return out
+    
+    @staticmethod
+    def embedding(indices: np.ndarray, weight: "Node", device: Device = "cpu") -> "Node":
+        value = weight.value[indices]
+        out = Node(f"emb({indices})", value=value, children=[weight], device=device)
+
+        def _backward():
+            xp(device).add.at(weight.grad, indices, out.grad)
+        
+        out._backward = _backward
+        return out
+    
+    @staticmethod
+    def conv(x: Value, kernel: Value, stride: int = 1, padding: int = 0, device: Device = "cpu") -> "Node":
+        x = Node.__ensure_node(x, device)
+        kernel = Node.__ensure_node(kernel, device)
+        xp_ = xp(device)
+
+        batch, in_ch, H, W = x.shape
+        out_ch, _, kH, kW = kernel.shape
+
+        H_out = (H + 2 * padding - kH) // stride + 1
+        W_out = (W + 2 * padding - kW) // stride + 1
+
+        if padding > 0:
+            x_padded = xp_.pad(x.value, ((0,0),(0,0),(padding,padding),(padding,padding)))
+        else:
+            x_padded = x.value
+
+        cols = xp_.zeros((batch, in_ch * kH * kW, H_out * W_out))
+        for i in range(kH):
+            for j in range(kW):
+                row = i * kW + j
+                cols[:, row*in_ch:(row+1)*in_ch, :] = \
+                    x_padded[:, :, i:i+stride*H_out:stride, j:j+stride*W_out:stride]\
+                    .reshape(batch, in_ch, -1)
+
+        W_col = kernel.value.reshape(out_ch, -1)
+
+        out_val = (W_col @ cols).reshape(batch, out_ch, H_out, W_out)
+        out = Node(f"conv({x.label}, {kernel.label})", out_val, children=[x, kernel], device=device)
+
+        def _backward():
+            grad_out = out.grad.reshape(batch, out_ch, -1)
+            dW = (grad_out @ cols.transpose(0, 2, 1))
+            kernel.grad += dW.sum(axis=0).reshape(kernel.value.shape)
+
+            dCols = W_col.T @ grad_out
+            dx_padded = xp_.zeros_like(x_padded)
+            for i in range(kH):
+                for j in range(kW):
+                    row = i * kW + j
+                    dx_padded[:, :, i:i+stride*H_out:stride, j:j+stride*W_out:stride] += \
+                        dCols[:, row*in_ch:(row+1)*in_ch, :].reshape(batch, in_ch, H_out, W_out)
+
+            if padding > 0:
+                x.grad += dx_padded[:, :, padding:-padding, padding:-padding]
+            else:
+                x.grad += dx_padded
+
+        out._backward = _backward
+        return out
+    
+    @staticmethod
+    def flatten(obj: Value, device: Device = "cpu") -> "Node":
+        obj = Node.__ensure_node(obj, device)
+        original_shape = obj.value.shape
+        value = obj.value.reshape(original_shape[0], -1)
+        out = Node(f"flatten({obj.label})", value, children=[obj], device=device)
+
+        def _backward():
+            obj.grad += out.grad.reshape(original_shape)
+
+        out._backward = _backward
+        return out
+    
+    @property
+    def T(self):
+        out = Node(f"{self.label}.T", value=self.value.T, children=[self], device=self.device)
+
+        def _backward():
+            self.grad += out.grad.T
+
+        out._backward = _backward
+        return out
 
     def sum(self) -> "Node":
         value = xp(self.device).sum(self.value)
@@ -286,7 +385,10 @@ class Node:
         return out
     
     def __str__(self):
-        return f"{self.label}={self.value}"
+        a, b = self.label, str(self.value)
+        if a == b:
+            return a
+        return f"{a}={b}"
 
     def __repr__(self):
         return str(self)
@@ -300,6 +402,17 @@ class Node:
     @property
     def shape(self):
         return self.value.shape
+    
+    def state_dict(self):
+        return {
+            "value": self.value.tolist(),
+            "shape": self.shape,
+            "device": self.device,
+        }
+    
+    def load_state_dict(self, state: Dict[str, Any]):
+        self.device = state["device"]
+        self.value = xp(self.device).array(state["value"]).reshape(state["shape"])
 
     def backward(self):
         topo = []

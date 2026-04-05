@@ -1,4 +1,4 @@
-from node import Device, xp
+from fygrad.node import Device, xp
 
 
 class DataLoader:
@@ -40,3 +40,6 @@ class DataLoader:
             X = self.X[batch]
             y = self.y[batch]
             yield X, y
+
+    def __len__(self):
+        return len(self.X)
