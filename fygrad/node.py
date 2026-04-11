@@ -113,6 +113,18 @@ class Node:
 
         out._backward = _backward
         return out
+    
+    @staticmethod
+    def exp(obj: Value, device: Device = "cpu") -> "Node":
+        obj = Node.__ensure_node(obj, device)
+        value = xp(device).exp(obj.value)
+        out = Node(f"exp({obj.label})", value=value, children=[obj], device=device)
+
+        def _backward():
+            obj.grad += out.grad * value
+
+        out._backward = _backward
+        return out
 
     @staticmethod
     def relu(obj: Value, device: Device = "cpu") -> "Node":
@@ -141,17 +153,27 @@ class Node:
     @staticmethod
     def softmax(obj: Value, device: Device = "cpu") -> "Node":
         obj = Node.__ensure_node(obj, device)
-        shift = xp(device).max(obj.value, keepdims=True, axis=1)
-        exps = xp(device).exp(obj.value - shift)
-        probs = exps / xp(device).sum(exps, keepdims=True, axis=1)
+        xp_ = xp(device)
+        batch_size = obj.value.shape[0] if obj.value.ndim == 3 else 1
+        props = {"axis": 1, "keepdims": True}
+        shift = xp_.max(obj.value, **(props if obj.value.ndim == 3 else {}))
+        exps = xp_.exp(obj.value - shift)
+        probs = exps / xp_.sum(exps, **(props if obj.value.ndim == 3 else {}))
         out = Node(f"softmax({obj.label})", probs, children=[obj], device=device)
 
         def _backward():
-            # s = probs.reshape(-1,1)
-            # jac = np.diagflat(probs) - np.dot(s, s.T)
-            # obj.grad += jac @ out.grad.T
-            v_dot_p = xp(device).sum(out.grad * probs, axis=1, keepdims=True)
-            obj.grad += probs * (out.grad - v_dot_p)
+            if obj.value.ndim == 3:
+                p = probs.reshape(batch_size, -1)
+                s = xp_.einsum("ni,nj->nij", p, p)
+            else:
+                p = probs.reshape(-1)
+                s = xp_.outer(p, p)
+
+            print("softmax")
+            print(out.grad)
+
+            jac = xp_.vectorize(np.diagflat, signature="(n)->(n,n)")(p) - s
+            obj.grad += jac @ out.grad
 
         out._backward = _backward
         return out
@@ -161,9 +183,10 @@ class Node:
         probs: Value, target_indices: np.ndarray, device: Device = "cpu"
     ) -> "Node":
         probs = Node.__ensure_node(probs, device)
-        batch_size = probs.value.shape[0]
-        correct_confidences = probs.value[xp(device).arange(batch_size), target_indices]
-        loss_value = -xp(device).mean(xp(device).log(correct_confidences))
+        batch_size = probs.value.shape[0] if probs.value.ndim == 3 else 1
+        ps = probs.value.reshape(batch_size, -1)
+        correct_confidences = ps[xp(device).arange(batch_size), target_indices]
+        loss_value = -xp(device).mean(xp(device).log(correct_confidences + 1e-15))
 
         out = Node(
             f"cross_entropy({probs.label})",
@@ -173,11 +196,11 @@ class Node:
         )
 
         def _backward():
-            grad = xp(device).zeros_like(probs.value)
+            grad = xp(device).zeros_like(ps)
             grad[xp(device).arange(batch_size), target_indices] = -1.0 / (
                 correct_confidences + 1e-15
             )
-            probs.grad += (grad * out.grad) / batch_size
+            probs.grad += (grad.reshape(probs.value.shape) * out.grad) / batch_size
 
         out._backward = _backward
         return out
@@ -239,8 +262,8 @@ class Node:
     def matmul(a: Value, b: Value, device: Device = "cpu") -> "Node":
         a = Node.__ensure_node(a, device)
         b = Node.__ensure_node(b, device)
-        a_val = a.value if getattr(a.value, "ndim", 0) > 1 else a.value.reshape(1, -1)
-        b_val = b.value if getattr(b.value, "ndim", 0) > 1 else b.value.reshape(1, -1)
+        a_val = a.value if a.value.ndim > 1 else a.value.reshape(1, -1)
+        b_val = b.value if b.value.ndim > 1 else b.value.reshape(1, -1)
 
         value = a_val @ b_val
         out = Node(
@@ -248,8 +271,14 @@ class Node:
         )
 
         def _backward():
-            da = out.grad @ b_val.T
-            db = a_val.T @ out.grad
+            b_t = b_val.swapaxes(-1, -2)
+            a_t = a_val.swapaxes(-1, -2)
+
+            print('matmul')
+            print(out.grad)
+
+            da = out.grad @ b_t
+            db = a_t @ out.grad
 
             a.grad += Node.__sum_to_shape(da, a.value.shape)
             b.grad += Node.__sum_to_shape(db, b.value.shape)
@@ -560,6 +589,8 @@ class Node:
             topo.append(node)
 
         build(self)
+
+        # print(*map(lambda x: x.label, reversed(topo)), sep="\n")
         self.grad = xp(self.device).ones_like(self.value, dtype=xp(self.device).float64)
         for node in reversed(topo):
             node._backward()
