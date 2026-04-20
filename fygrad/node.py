@@ -24,13 +24,13 @@ class Node:
         label: str,
         value: Any,
         grad: np.ndarray = None,
-        children: List["Node"] = [],
+        children: List["Node"] = None,
         device: Device = "cpu",
     ):
         self.label = label
         self.value = value
         self.grad = grad
-        self.children = children
+        self.children = children or []
         self.device = device
         self._backward = lambda: None
 
