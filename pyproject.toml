@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fygrad"
+version = "0.1.0"
+description = "A tiny autograd and neural-network toolkit with NumPy/CuPy support."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Fasih Hasan Khan", email = "fhk.tcs@gmail.com" }
+]
+keywords = ["autograd", "neural-networks", "deep-learning", "numpy"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence"
+]
+dependencies = ["numpy>=1.23"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fygrad*"]
