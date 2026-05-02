@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A tiny autograd and neural-network toolkit with NumPy/CuPy support."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "LICENSE" }
+license = { text = "MIT License" }
 authors = [
   { name = "Fasih Hasan Khan", email = "fhk.tcs@gmail.com" }
 ]
@@ -28,3 +28,6 @@ dependencies = ["numpy>=1.23"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["fygrad*"]
+
+[tool.setuptools]
+license-files = []
