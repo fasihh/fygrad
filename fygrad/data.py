@@ -95,6 +95,8 @@ class Data:
         return Data(self.xp.matmul(other.data, self.data), device=self.device)
 
     def __str__(self):
+        if len(self.data) == 1:
+            return str(self.xp.round(self.data.flatten()[0], 6))
         return str(self.data)
 
     def __repr__(self):
