@@ -39,7 +39,7 @@ class Data:
             if self.data.ndim == 0:
                 self.data = self.data.reshape(1, 1)
             elif self.data.ndim == 1:
-                self.data = self.data.reshape(-1, 1)
+                self.data = self.data.reshape(1, -1)
 
     @property
     def xp(self):
@@ -94,10 +94,10 @@ class Data:
     def __rmatmul__(self, other):
         return Data(self.xp.matmul(other.data, self.data), device=self.device)
 
-    def __str__(self):
-        if self.data.shape[-1] == 1:
-            return str(self.xp.round(self.data.flatten()[0], 6))
-        return str(self.data)
+    def __str__(self, precision: int = 4):
+        if all(x == 1 for x in self.data.shape):
+            return str(self.xp.round(self.data.flatten()[0], precision))
+        return str(self.xp.round(self.data, precision))
 
     def __repr__(self):
         return str(self.data)
